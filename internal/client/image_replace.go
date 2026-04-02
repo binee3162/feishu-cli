@@ -13,16 +13,38 @@ import (
 // Supports absolute paths, relative paths, and home-dir paths (~/).
 var imagePathPattern = regexp.MustCompile(`(?i)(?:^|["\s:])(/[\w./-]+\.(?:png|jpe?g|gif|bmp|tiff?|webp))\b`)
 
+// expandHomePath expands ~ or ~/ prefix to the user's home directory.
+func expandHomePath(s string) string {
+	if s == "~" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return s
+		}
+		return home
+	}
+	if strings.HasPrefix(s, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return s
+		}
+		return filepath.Join(home, s[2:])
+	}
+	return s
+}
+
 // isLocalImagePath checks if a string looks like a local image file path
-// and the file actually exists on disk.
+// and the file actually exists on disk. Supports ~ home directory expansion.
 func isLocalImagePath(s string) bool {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return false
 	}
 
+	// Expand ~ to home directory
+	expanded := expandHomePath(s)
+
 	// Must have an image extension
-	ext := strings.ToLower(filepath.Ext(s))
+	ext := strings.ToLower(filepath.Ext(expanded))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp":
 		// ok
@@ -31,11 +53,17 @@ func isLocalImagePath(s string) bool {
 	}
 
 	// Must exist on disk
-	info, err := os.Stat(s)
+	info, err := os.Stat(expanded)
 	if err != nil {
 		return false
 	}
 	return !info.IsDir()
+}
+
+// resolveImagePath resolves a potentially tilde-prefixed path to an absolute path.
+// This is used when passing the path to UploadIMImage.
+func resolveImagePath(s string) string {
+	return expandHomePath(strings.TrimSpace(s))
 }
 
 // ReplaceLocalImagesInPost scans a post (rich text) message content JSON string,
@@ -78,9 +106,10 @@ func ReplaceLocalImagesInPost(contentJSON string) (string, error) {
 				if imageKey == "" || !isLocalImagePath(imageKey) {
 					continue
 				}
-				// Upload the local image
-				fmt.Fprintf(os.Stderr, "正在上传富文本图片: %s\n", filepath.Base(imageKey))
-				newKey, err := UploadIMImage(imageKey)
+				// Upload the local image (resolve ~ path)
+				resolvedPath := resolveImagePath(imageKey)
+				fmt.Fprintf(os.Stderr, "正在上传富文本图片: %s\n", filepath.Base(resolvedPath))
+				newKey, err := UploadIMImage(resolvedPath)
 				if err != nil {
 					return "", fmt.Errorf("上传图片 %s 失败: %w", imageKey, err)
 				}
@@ -167,8 +196,9 @@ func replaceImagesInElements(elements []interface{}) (bool, error) {
 		if tag == "img" {
 			imgKey, _ := elemMap["img_key"].(string)
 			if imgKey != "" && isLocalImagePath(imgKey) {
-				fmt.Fprintf(os.Stderr, "正在上传卡片图片: %s\n", filepath.Base(imgKey))
-				newKey, err := UploadIMImage(imgKey)
+				resolvedPath := resolveImagePath(imgKey)
+				fmt.Fprintf(os.Stderr, "正在上传卡片图片: %s\n", filepath.Base(resolvedPath))
+				newKey, err := UploadIMImage(resolvedPath)
 				if err != nil {
 					return false, fmt.Errorf("上传图片 %s 失败: %w", imgKey, err)
 				}
@@ -209,8 +239,9 @@ func replaceImagesInElements(elements []interface{}) (bool, error) {
 			if extraTag == "img" {
 				imgKey, _ := extra["img_key"].(string)
 				if imgKey != "" && isLocalImagePath(imgKey) {
-					fmt.Fprintf(os.Stderr, "正在上传卡片图片: %s\n", filepath.Base(imgKey))
-					newKey, err := UploadIMImage(imgKey)
+					resolvedPath := resolveImagePath(imgKey)
+					fmt.Fprintf(os.Stderr, "正在上传卡片图片: %s\n", filepath.Base(resolvedPath))
+					newKey, err := UploadIMImage(resolvedPath)
 					if err != nil {
 						return false, fmt.Errorf("上传图片 %s 失败: %w", imgKey, err)
 					}
