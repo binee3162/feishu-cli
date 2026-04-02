@@ -17,22 +17,22 @@ var sendMessageCmd = &cobra.Command{
 	Long: `向飞书用户或群组发送消息。
 
 参数:
-  --receive-id-type   接收者类型（必填）
-  --receive-id        接收者标识（必填）
-  --msg-type          消息类型（默认: text）
-  --content, -c       消息内容 JSON
-  --content-file      消息内容 JSON 文件
-  --text, -t          简单文本消息（快捷方式）
-  --file, -f          发送本地文件（自动上传并发送，快捷方式）
-  --image             发送本地图片（自动上传并发送，快捷方式）
-  --output, -o        输出格式（json）
+  --receive-id-type  接收者类型（必填）
+  --receive-id       接收者标识（必填）
+  --msg-type         消息类型（默认: text）
+  --content, -c      消息内容 JSON
+  --content-file     消息内容 JSON 文件
+  --text, -t         简单文本消息（快捷方式）
+  --file, -f         发送本地文件（自动上传并发送，快捷方式）
+  --image            发送本地图片（自动上传并发送，快捷方式）
+  --output, -o       输出格式（json）
 
 接收者类型:
-  email       邮箱
-  open_id     Open ID
-  user_id     用户 ID
-  union_id    Union ID
-  chat_id     群组 ID
+  email     邮箱
+  open_id   Open ID
+  user_id   用户 ID
+  union_id  Union ID
+  chat_id   群组 ID
 
 消息类型:
   text         文本消息
@@ -45,6 +45,12 @@ var sendMessageCmd = &cobra.Command{
   interactive  卡片消息
   share_chat   分享群消息
   share_user   分享用户消息
+
+本地图片自动上传:
+  发送 post 或 interactive 消息时，如果 JSON 中包含本地图片路径，
+  会自动上传图片并替换为 image_key：
+  - post 消息：img 标签的 image_key 字段（如 {"tag":"img","image_key":"/path/to/img.png"}）
+  - interactive 卡片：img 组件的 img_key 字段（如 {"tag":"img","img_key":"/path/to/img.png"}）
 
 示例:
   # 发送文本消息
@@ -71,12 +77,19 @@ var sendMessageCmd = &cobra.Command{
     --receive-id oc_xxx \
     --image /path/to/screenshot.png
 
-  # 发送卡片消息
+  # 发送带本地图片的富文本消息（自动上传）
+  feishu-cli msg send \
+    --receive-id-type email \
+    --receive-id user@example.com \
+    --msg-type post \
+    --content-file post_with_images.json
+
+  # 发送带本地图片的卡片消息（自动上传）
   feishu-cli msg send \
     --receive-id-type email \
     --receive-id user@example.com \
     --msg-type interactive \
-    --content-file card.json`,
+    --content-file card_with_images.json`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.Validate(); err != nil {
 			return err
@@ -168,6 +181,13 @@ var sendMessageCmd = &cobra.Command{
 			return fmt.Errorf("必须指定 --content、--content-file、--text、--file 或 --image")
 		}
 
+		// Auto-replace local image paths for post and interactive messages
+		var err error
+		msgContent, err = replaceLocalImages(msgType, msgContent)
+		if err != nil {
+			return err
+		}
+
 		messageID, err := client.SendMessage(receiveIDType, receiveID, msgType, msgContent, token)
 		if err != nil {
 			return err
@@ -189,8 +209,22 @@ var sendMessageCmd = &cobra.Command{
 	},
 }
 
+// replaceLocalImages detects and uploads local image file paths in message content
+// for post and interactive message types.
+func replaceLocalImages(msgType, content string) (string, error) {
+	switch msgType {
+	case "post":
+		return client.ReplaceLocalImagesInPost(content)
+	case "interactive":
+		return client.ReplaceLocalImagesInCard(content)
+	default:
+		return content, nil
+	}
+}
+
 func init() {
 	msgCmd.AddCommand(sendMessageCmd)
+
 	sendMessageCmd.Flags().String("receive-id-type", "", "接收者类型（email/open_id/user_id/union_id/chat_id）")
 	sendMessageCmd.Flags().String("receive-id", "", "接收者标识")
 	sendMessageCmd.Flags().String("msg-type", "text", "消息类型（text/post/image/interactive 等）")
@@ -200,6 +234,7 @@ func init() {
 	sendMessageCmd.Flags().StringP("file", "f", "", "发送本地文件（自动上传并发送）")
 	sendMessageCmd.Flags().String("image", "", "发送本地图片（自动上传并发送）")
 	sendMessageCmd.Flags().StringP("output", "o", "", "输出格式（json）")
-	sendMessageCmd.Flags().String("user-access-token", "", "User Access Token（用户授权令牌）")
+	sendMessageCmd.Flags().String("user-access-token", "", "User Access Token（可选）")
+
 	mustMarkFlagRequired(sendMessageCmd, "receive-id-type", "receive-id")
 }
