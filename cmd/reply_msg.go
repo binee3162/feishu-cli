@@ -15,20 +15,21 @@ var replyMsgCmd = &cobra.Command{
 	Long: `回复指定的消息。
 
 参数:
-  message_id    消息 ID（必填）
-  --msg-type    消息类型（默认 text）
-  --text, -t    简单文本消息（快捷方式）
-  --content, -c 消息内容 JSON
-  --content-file 消息内容 JSON 文件
+  message_id           消息 ID（必填）
+  --msg-type           消息类型（默认 text）
+  --text, -t           简单文本消息（快捷方式）
+  --content, -c        消息内容 JSON
+  --content-file       消息内容 JSON 文件
+  --auto-upload-images 自动检测并上传 JSON 中的本地图片路径（post/interactive）
 
 消息类型:
   text         文本消息
   post         富文本消息
   interactive  卡片消息
 
-本地图片自动上传:
-  回复 post 或 interactive 消息时，如果 JSON 中包含本地图片路径，
-  会自动上传图片并替换为 image_key（与 msg send 行为一致）。
+本地图片自动上传（需显式启用 --auto-upload-images）:
+  回复 post 或 interactive 消息时，加上 --auto-upload-images 标志，
+  会自动检测并上传 JSON 中的本地图片路径（与 msg send 行为一致）。
 
 示例:
   # 回复文本消息
@@ -37,8 +38,8 @@ var replyMsgCmd = &cobra.Command{
   # 回复富文本消息
   feishu-cli msg reply om_xxx --msg-type post --content-file reply.json
 
-  # 回复卡片消息
-  feishu-cli msg reply om_xxx --msg-type interactive --content '{\"type\":\"template\",...}'`,
+  # 回复带本地图片的卡片消息
+  feishu-cli msg reply om_xxx --msg-type interactive --auto-upload-images --content-file card.json`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.Validate(); err != nil {
@@ -52,6 +53,7 @@ var replyMsgCmd = &cobra.Command{
 		content, _ := cmd.Flags().GetString("content")
 		contentFile, _ := cmd.Flags().GetString("content-file")
 		text, _ := cmd.Flags().GetString("text")
+		autoUploadImages, _ := cmd.Flags().GetBool("auto-upload-images")
 
 		var msgContent string
 		if contentFile != "" {
@@ -69,11 +71,13 @@ var replyMsgCmd = &cobra.Command{
 			return fmt.Errorf("必须指定 --content、--content-file 或 --text")
 		}
 
-		// Auto-replace local image paths for post and interactive messages
-		var err error
-		msgContent, err = replaceLocalImages(msgType, msgContent)
-		if err != nil {
-			return err
+		// Auto-replace local image paths only when explicitly enabled
+		if autoUploadImages {
+			var err error
+			msgContent, err = replaceLocalImages(msgType, msgContent)
+			if err != nil {
+				return err
+			}
 		}
 
 		newMessageID, err := client.ReplyMessage(messageID, msgType, msgContent, token)
@@ -96,5 +100,6 @@ func init() {
 	replyMsgCmd.Flags().StringP("text", "t", "", "简单文本消息")
 	replyMsgCmd.Flags().StringP("content", "c", "", "消息内容 JSON")
 	replyMsgCmd.Flags().String("content-file", "", "消息内容 JSON 文件")
+	replyMsgCmd.Flags().Bool("auto-upload-images", false, "自动检测并上传消息 JSON 中的本地图片路径")
 	replyMsgCmd.Flags().String("user-access-token", "", "User Access Token（可选）")
 }
