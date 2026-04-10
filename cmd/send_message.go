@@ -340,9 +340,22 @@ func processAndUploadLocalImages(content string, basePath string) (string, int, 
 func processJSONLocalImages(data interface{}, basePath string) (bool, interface{}, int) {
 	switch v := data.(type) {
 	case map[string]interface{}:
+		tag, hasTag := v["tag"].(string)
+
 		// 检查是否是 img 标签
-		if tag, ok := v["tag"].(string); ok && tag == "img" {
-			if imageKeyVal, ok := v["image_key"].(string); ok && isLocalPath(imageKeyVal) {
+		if hasTag && tag == "img" {
+			// 飞书卡片使用 img_key，image_key 可能是其他格式
+			var imageKeyVal string
+			var hasKey bool
+			if keyVal, ok := v["img_key"].(string); ok && isLocalPath(keyVal) {
+				imageKeyVal = keyVal
+				hasKey = true
+			} else if keyVal, ok := v["image_key"].(string); ok && isLocalPath(keyVal) {
+				imageKeyVal = keyVal
+				hasKey = true
+			}
+
+			if hasKey {
 				imageKey := uploadLocalImageForIM(imageKeyVal, basePath)
 				if imageKey == "" {
 					return false, v, 0
@@ -352,12 +365,64 @@ func processJSONLocalImages(data interface{}, basePath string) (bool, interface{
 				for key, val := range v {
 					newMap[key] = val
 				}
-				newMap["image_key"] = imageKey
+				// img 标签优先使用 img_key（飞书卡片格式）
+				if _, ok := v["img_key"]; ok {
+					newMap["img_key"] = imageKey
+				} else {
+					newMap["image_key"] = imageKey
+				}
 				return true, newMap, 1
 			}
 			return false, v, 0
 		}
 
+		// 检查是否是 img_combination 标签（多图混排组件）
+		if hasTag && tag == "img_combination" {
+			imgList, ok := v["img_list"].([]interface{})
+			if !ok {
+				// 递归处理所有字段
+				goto recursiveProcess
+			}
+
+			newImgList := make([]interface{}, len(imgList))
+			changed := false
+			count := 0
+			for i, item := range imgList {
+				imgItem, ok := item.(map[string]interface{})
+				if !ok {
+					newImgList[i] = item
+					continue
+				}
+
+				if imgKeyVal, ok := imgItem["img_key"].(string); ok && isLocalPath(imgKeyVal) {
+					imageKey := uploadLocalImageForIM(imgKeyVal, basePath)
+					if imageKey != "" {
+						newItem := make(map[string]interface{}, len(imgItem))
+						for k, val := range imgItem {
+							newItem[k] = val
+						}
+						newItem["img_key"] = imageKey
+						newImgList[i] = newItem
+						changed = true
+						count++
+						continue
+					}
+				}
+				newImgList[i] = item
+			}
+
+			if !changed {
+				return false, v, 0
+			}
+			newMap := make(map[string]interface{}, len(v))
+			for key, val := range v {
+				newMap[key] = val
+			}
+			newMap["img_list"] = newImgList
+			return true, newMap, count
+		}
+
+	recursiveProcess:
 		// 递归处理所有字段
 		changed := false
 		count := 0
