@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -342,11 +343,12 @@ func processJSONLocalImages(data interface{}, basePath string) (bool, interface{
 	case map[string]interface{}:
 		tag, hasTag := v["tag"].(string)
 
-		// 检查是否是 img 标签
+		// 处理 img 标签
 		if hasTag && tag == "img" {
-			// 飞书卡片使用 img_key，image_key 可能是其他格式
 			var imageKeyVal string
 			var hasKey bool
+
+			// 飞书卡片使用 img_key，image_key 可能是其他格式
 			if keyVal, ok := v["img_key"].(string); ok && isLocalPath(keyVal) {
 				imageKeyVal = keyVal
 				hasKey = true
@@ -355,38 +357,36 @@ func processJSONLocalImages(data interface{}, basePath string) (bool, interface{
 				hasKey = true
 			}
 
-			if hasKey {
-				imageKey := uploadLocalImageForIM(imageKeyVal, basePath)
-				if imageKey == "" {
-					return false, v, 0
-				}
-				// 保留所有原始属性，仅替换 image_key
-				newMap := make(map[string]interface{}, len(v))
-				for key, val := range v {
-					newMap[key] = val
-				}
-				// img 标签优先使用 img_key（飞书卡片格式）
-				if _, ok := v["img_key"]; ok {
-					newMap["img_key"] = imageKey
-				} else {
-					newMap["image_key"] = imageKey
-				}
-				return true, newMap, 1
+			if !hasKey {
+				return false, v, 0
 			}
-			return false, v, 0
+
+			imageKey := uploadLocalImageForIM(imageKeyVal, basePath)
+			if imageKey == "" {
+				return false, v, 0
+			}
+
+			// 复制 map 并替换 image_key
+			newMap := maps.Clone(v)
+			if _, ok := v["img_key"]; ok {
+				newMap["img_key"] = imageKey
+			} else {
+				newMap["image_key"] = imageKey
+			}
+			return true, newMap, 1
 		}
 
-		// 检查是否是 img_combination 标签（多图混排组件）
+		// 处理 img_combination 多图混排组件
 		if hasTag && tag == "img_combination" {
 			imgList, ok := v["img_list"].([]interface{})
 			if !ok {
-				// 递归处理所有字段
-				goto recursiveProcess
+				return false, v, 0
 			}
 
 			newImgList := make([]interface{}, len(imgList))
 			changed := false
 			count := 0
+
 			for i, item := range imgList {
 				imgItem, ok := item.(map[string]interface{})
 				if !ok {
@@ -394,46 +394,45 @@ func processJSONLocalImages(data interface{}, basePath string) (bool, interface{
 					continue
 				}
 
-				if imgKeyVal, ok := imgItem["img_key"].(string); ok && isLocalPath(imgKeyVal) {
-					imageKey := uploadLocalImageForIM(imgKeyVal, basePath)
-					if imageKey != "" {
-						newItem := make(map[string]interface{}, len(imgItem))
-						for k, val := range imgItem {
-							newItem[k] = val
-						}
-						newItem["img_key"] = imageKey
-						newImgList[i] = newItem
-						changed = true
-						count++
-						continue
-					}
+				imgKeyVal, ok := imgItem["img_key"].(string)
+				if !ok || !isLocalPath(imgKeyVal) {
+					newImgList[i] = item
+					continue
 				}
-				newImgList[i] = item
+
+				imageKey := uploadLocalImageForIM(imgKeyVal, basePath)
+				if imageKey == "" {
+					newImgList[i] = item
+					continue
+				}
+
+				newItem := maps.Clone(imgItem)
+				newItem["img_key"] = imageKey
+				newImgList[i] = newItem
+				changed = true
+				count++
 			}
 
 			if !changed {
 				return false, v, 0
 			}
-			newMap := make(map[string]interface{}, len(v))
-			for key, val := range v {
-				newMap[key] = val
-			}
+
+			newMap := maps.Clone(v)
 			newMap["img_list"] = newImgList
 			return true, newMap, count
 		}
 
-	recursiveProcess:
-		// 递归处理所有字段
+		// 递归处理普通 map
 		changed := false
 		count := 0
-		newMap := make(map[string]interface{}, len(v))
+		newMap := maps.Clone(v)
 		for key, val := range v {
 			c, newVal, n := processJSONLocalImages(val, basePath)
 			if c {
 				changed = true
 				count += n
+				newMap[key] = newVal
 			}
-			newMap[key] = newVal
 		}
 		if !changed {
 			return false, v, 0
